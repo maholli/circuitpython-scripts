@@ -1,3 +1,10 @@
+# citcuitpython script intended for the Adafruit Circuit Playground Express
+# 
+# manipulate host computer's mouse using...
+#                       1. capacitive controls
+#                       2. accelerometer 
+#
+
 from adafruit_circuitplayground.express import cpx
 from adafruit_hid.mouse import Mouse
 import board
@@ -26,10 +33,7 @@ while True:
     else:
         cpx.red_led = True
         x, y, z = cpx.acceleration
-        x_int = int(x)
-        y_int = int(y)
-        z_int = int(z)
-        Mouse().move(x_int, y_int)
+        Mouse().move(int(y), int(x))
         if cpx.button_a:
             Mouse().press(Mouse.LEFT_BUTTON)
             while cpx.button_a:    # Wait for button A to be released
