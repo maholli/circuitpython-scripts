@@ -32,3 +32,6 @@ USB input--->Recieved           |			 |
 											 |
 									 Print to terminal
 
+### TI ADS124S08 library for circuitpython
+basic functions for the 24-bit ADC from TI: [http://www.ti.com/product/ADS124S08](http://www.ti.com/product/ADS124S08)
+* see [xlab test board](https://github.com/maholli/XTB) for motivation/details
