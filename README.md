@@ -11,26 +11,6 @@ examples and testing scripts for developing with circuitpython
 demonstrates how to turn the SAMD microcontroller running circuitpython into a USB-to-UART bridge via the REPL interface.
 For example...
 * using two USB cables, two Feather M0 boards, and some jumper wires
-USB_A<------>Feather_A------>Feather_B<--->USB_B
-   |			|				|			 |
-   |			|				|			 |
-terminal open	|				|		terminal open
-	|			|				|			 |
-	|	  wait for USB input    |			 |
-	|			|				|			 |
-	|			|	waiting for UART input   |
-	|			|				|			 |
-USB input--->Recieved           |			 |
-				|				|			 |
-	  Pass USB input to UART    |			 |
-				|				|			 |
-		  wait for USB input    |			 |
-								|			 |
-						UART input recieved  |
-								|			 |
-					Pass UART to USB_B--->Recieved
-											 |
-									 Print to terminal
 
 ### TI ADS124S08 library for circuitpython
 basic functions for the 24-bit ADC from TI: [http://www.ti.com/product/ADS124S08](http://www.ti.com/product/ADS124S08)
