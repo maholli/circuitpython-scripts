@@ -1,8 +1,9 @@
 from time import sleep
 from adafruit_bus_device import spi_device
+# from digitalio import DigitalInOut, Direction
+from math import sqrt
 
-
-default = bytes([0x42, 0x08, 0xCC, 0x08, 0x1C, 0x3A, 0x00, 0xFF, 0x00, 0x18])
+default = bytes([0x42, 0x08, 0xCC, 0x08, 0x98, 0x3A, 0x00, 0xFF, 0x00, 0x18])
 registers = [
                     "(ID):        ",
                     "(STATUS):    ",
@@ -24,20 +25,27 @@ registers = [
                     "(GPIOCON):   "]
 
 class _ADS124S08:
-    def __init__(self, reset, refV=2.5, pgaGain=1):
+    
+
+    def __init__(self, refV, pgaGain=1, drdy_pin=0):
+        self.DRDY = False
+        self._refV=refV # default refV = 2.5V
+        # Setup DRDY pin.
+        if drdy_pin:
+            self.DRDY = True
+            self._drdy= drdy_pin
         self.pgaGain = pgaGain
-        self.LSBsize = refV/(pgaGain*pow(2,23))
-        self.xtb_rst = reset
-        self.init_adc()
+        self._LSBSIZE()
+        self._init_adc()
         self.startTrig = True
 
-    def LSBSIZE(self, refV=2.5):
+    def _LSBSIZE(self):
         pgaGain = self.pgaGain
-        val = refV/(pgaGain*pow(2,23))
+        val = self._refV/(pgaGain*pow(2,23))
         self.LSBsize = val
         return val
 
-    def init_adc(self):
+    def _init_adc(self):
         self.reset()
         self.start()
         self.regreadout()
@@ -45,9 +53,20 @@ class _ADS124S08:
     def readValue(self):
         zzz = bytearray(3)
         with self.spi_device as spi:
+            sleep(2.5e-8) 
             spi.write(bytes([0x12]))
             spi.readinto(zzz)
             return self.dataconvert(zzz)
+    
+    def readValue_drdy(self):
+        readbuf = bytearray(3)
+        while self._drdy.value is True: # wait until DRDY goes low
+            pass
+        with self.spi_device as spi:
+            sleep(4e-8)  # wait 4*tclk        
+            spi.readinto(readbuf) 
+        readData = self.dataconvert(readbuf)
+        return readData
 
     def reset(self):
         with self.spi_device as spi:
@@ -74,17 +93,18 @@ class _ADS124S08:
             spi.write(bytes([start]+[length]+cmd))
     
     def regreadout(self):
-        readOut = bytearray(18)
+        _readOut = bytearray(18)
         with self.spi_device as spi:
             spi.write(bytes([0x20, 0x12]))
-            spi.readinto(readOut)
+            spi.readinto(_readOut)
         print("-------------------------------")
-        for i, j in enumerate(readOut):
+        for i, j in enumerate(_readOut):
             print(registers[i], hex(j))
         print("-------------------------------")
+        return _readOut
     
     def GPIO(self, GPIODAT, GPIOCON):
-    	with self.spi_device as spi:
+        with self.spi_device as spi:
             spi.write(bytes([0x50, 0x01, GPIODAT, GPIOCON]))
     
     def calibrate(self):
@@ -92,42 +112,51 @@ class _ADS124S08:
             spi.write(bytes([0x19]))
 
     def dataconvert(self, raw):
-        self.LSBSIZE()
+        self._LSBSIZE()
         rawDataIN = 0 | raw[0]
         rawDataIN = (rawDataIN << 8) | raw[1]
         rawDataIN = (rawDataIN << 8) | raw[2]
-        # if (((1 << 23) & rawDataIN) != 0):
-        if (rawDataIN > 8.38861e6):
+        if (((1 << 23) & rawDataIN) != 0):
+        # if (rawDataIN > 8.38861e6):
             dataOUT = (((~rawDataIN) & ((1 << 24) - 1)) + 1) * self.LSBsize * -1
         else:
             dataOUT = rawDataIN*self.LSBsize
         return dataOUT
- 
 
-    def readtemp(self):
+    def readtemp(self, ref=0x39):
+        _tbuff=0
         with self.spi_device as spi:
-            spi.write(bytes([0x49, 0x00, 0x58]))
-        sleep(1)
-        data = self.readValue()*1000
+            spi.write(bytes([0x42, 0x07, 0xCC, 0x00, 0x12, ref, 0x00, 0xFF, 0x38, 0x58]))
+        for _ in range(5):
+            _tbuff += self.readValue_drdy()*1000
+        _tbuff = _tbuff/5
         with self.spi_device as spi:
             spi.write(bytes([0x49, 0x00, 0x18]))        
-        output = (-1*((129.00-data)*0.403)+25)
-        print(output)
-        return output
+        _output = (-1*((129.00-_tbuff)*0.403)+25)
+        return _output
 
-    def test(self):
-        zeroBuf = []    
+    def test(self, inp, inn, pga=0xAA, datarate=0x91, ref=0x39, printout=False):
+        zeroBuf = []
+        t = self.readtemp(ref=ref)    
         pgaOLD = self.pgaGain
         self.pgaGain = 4
+        inpMux  = (inp << 4) | inn 
+        # VBIAS = AVDD+AVSS/2, SYS = inputs shorted to mid supply
+        cmd     = bytes([0x42,0x07, inpMux, pga, datarate, ref, 0x00, 0xFF, 0x00, 0x38])
         with self.spi_device as spi:
-            spi.write(bytes([0x42, 0x08, 0x20, 0x0A, 0x1C, 0x3A, 0x00, 0xFF, 0x90, 0x38]))
-        for i in range(30):
-            zeroBuf.append(abs(self.readValue()))
-        b = [abs(x[1] - x[0]) for x in zip(zeroBuf[1:], zeroBuf)]
-        test = sum(b)/30 
-        print('Self-test Result:', test, 'PGA gain:', self.pgaGain)
-        return test
-        self.pgaGain = pgaOLD 
+            spi.write(cmd)
+        for _ in range(30):
+            testValue = abs(self.readValue_drdy())
+            zeroBuf.append(testValue)
+        
+        mean = sum(zeroBuf) / len(zeroBuf)
+        var = sum(pow(x-mean,2) for x in zeroBuf) / len(zeroBuf)
+        stdev = sqrt(var)
+        if printout:
+            [print('%E' % d) for d in zeroBuf]
+            print('temp: %f, mean: %E, variance: %E, stdev: %E' % (t, mean, var, stdev))
+        self.pgaGain = pgaOLD
+        return (t, mean,var,stdev)
     
     def IVsweep(self, inn, inp, start=0x00, stop=0x0A, idacMux=15):
             buffer = []
@@ -135,59 +164,45 @@ class _ADS124S08:
                 buffer.append((hex(idacMag), self.readpins(inn, inp, idacMag=idacMag, idacMux=idacMux, delayT=0.05)))
             return buffer
 
-    def readpins(self, inp, inn, idacMag=0, idacMux=15, vb='off', pga=0xA8, datarate=0x18, delayT=0.01, hall=False):
+    def readpins(self, inp, inn, idacMag=0, idacMux=15, vb='off', vbhex='off', pga=0xA8, datarate=0x18, ref=0x39, delayT=0.01, hall=False, burst=0):
         vbPin = 0x80
         if vb != 'off' and vb < 6:
-            vbPin = (0x80 | 1<<vb)     
+            vbPin = (0x80 | 1<<vb) 
+        elif vbhex != 'off':
+            vbPin = vbhex    
         inpMux  = (inp << 4) | inn               
-        bufferA = bytearray(3)
-        bufferB = bytearray(3)
-        cmd     = bytes([0x42,0x06, inpMux, pga, datarate, 0x39, idacMag, (0xF0 | idacMux), vbPin])
+        burstbuff = []
+        cmd     = bytes([0x42,0x06, inpMux, pga, datarate, ref, idacMag, (0xF0 | idacMux), vbPin])
+        
         with self.spi_device as spi:
             spi.write(cmd)
-            sleep(delayT)
-            spi.write(bytes([0x00,0x12]))
-            spi.readinto(bufferA)
-            if hall:
-                vapp = (idacMux << 4) | vb 
-                sleep(0.001)
-                spi.write(bytes([0x42,0x00,vapp]))
-                sleep(0.1)
-                spi.write(bytes([0x00,0x12]))
-                spi.readinto(bufferB)
-                vapplied = self.dataconvert(bufferB)
-                print(vapplied,end=''), print(',',end='')
-        output = self.dataconvert(bufferA)
-        return output
-    
+        
+        if burst > 0:
+            for _ in range(burst):
+                burstbuff.append(self.readValue_drdy())
+            return burstbuff
 
+        if self.DRDY: # DRDY mode
+            bufferA = self.readValue_drdy()
+        else: # non-DRDY mode
+            sleep(delayT)
+            bufferA = self.readValue()
+        if hall:
+            with self.spi_device as spi:
+                vapp = (idacMux << 4) | vb 
+                spi.write(bytes([0x42,0x00,vapp]))
+            if self.DRDY: # DRDY mode
+                bufferB = self.readValue_drdy()
+                return (bufferA, bufferB)
+        return bufferA
+
+    def rawInput(self, inputBuffer, delay):
+        with self.spi_device as spi:
+            spi.write(inputBuffer)
+        sleep(delay)
 
 class XTB(_ADS124S08):
     # XTB class from ADS124S08    
-    def __init__(self, spi, xtb_rst, xtb_cs, baudrate=8000000, phase=1, polarity=0):
+    def __init__(self, spi, xtb_cs, drdy=0, baudrate=6000000, phase=1, polarity=0, refV=2.5):
         self.spi_device = spi_device.SPIDevice(spi, xtb_cs, baudrate=baudrate, phase=phase, polarity=polarity)
-        super().__init__(xtb_rst)
-    
-    # def ZnO(self):
-    #     buffer = []
-    #     buffer.append(super().readpins(6, 12, idacMag=0x01, idacMux=6, delayT=0.05))
-    #     sleep(0.01)
-    #     buffer.append(super().readpins(3, 12, idacMag=0x01, idacMux=3, delayT=0.05))
-    #     sleep(0.01)
-    #     buffer.append(super().readpins(2, 12, idacMag=0x01, idacMux=2, delayT=0.05))
-    #     sleep(0.01)
-    #     buffer.append(super().readpins(5, 12, idacMag=0x01, idacMux=5, delayT=0.05))
-    #     sleep(0.01)
-    #     super().GPIO(0x00, 0x04)
-    #     sleep(0.01)
-    #     buffer.append(super().readpins(1, 10, idacMag=0x01, idacMux=1, delayT=0.05))
-    #     sleep(0.01)
-    #     super().GPIO(0x00, 0x01)
-    #     buffer.append(super().readpins(7, 8,  idacMag=0x01, idacMux=7, delayT=0.05)) 
-    #     sleep(0.01)
-    #     super().readpins(6, 12)
-    #     super().GPIO(0x00, 0x00)
-    #     # super().GPIO(0x00, 0x08)
-    #     # sleep(0.01)
-    #     # buffer.append(super().readpins(0, 11, idacMag=0x01, idacMux=0, delayT=0.05))           
-    #     return buffer
+        super().__init__(refV, drdy_pin=drdy)
