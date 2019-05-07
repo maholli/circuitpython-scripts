@@ -1,1 +1,0 @@
-START putty.exe -serial COM38 115200
